@@ -108,6 +108,7 @@ import {
   discardUploaded,
   linkRows,
 } from "./media";
+import { buildOrderMessage, parseQty } from "./order";
 
 // ============================================================ seller products
 
@@ -619,8 +620,12 @@ app.get(
     );
     if (!rows[0]) throw new HttpError(404, "not_found", "المنتج غير متاح");
 
-    // Only accept product links on our own storefront.
-    let link = `${ALLOWED_ORIGINS[0] ?? "https://lteze.com"}`;
+    // Quantity chosen by the customer: validated here; price and total come from the database only.
+    const qty = parseQty(req.query.qty);
+    if (qty === null) throw new HttpError(400, "invalid_quantity", "الكمية يجب أن تكون رقماً صحيحاً من 1 إلى 999");
+
+    // Real product link on LTEZE. A link passed by the page is accepted only on our own storefront origins.
+    let link = `${ALLOWED_ORIGINS[0] ?? "https://lteze.com"}${process.env.MARKET_PATH || "/pages/market"}?p=${pid}`;
     const raw = typeof req.query.url === "string" ? req.query.url : "";
     try {
       const u = new URL(raw);
@@ -628,15 +633,7 @@ app.get(
     } catch {
       /* ignore invalid url */
     }
-    const text = [
-      "مرحباً، أريد طلب:",
-      "",
-      `اسم المنتج: ${rows[0].name}`,
-      `السعر: ${Number(rows[0].price)}`,
-      `الرابط: ${link}`,
-      "",
-      "من LTEZE.",
-    ].join("\n");
+    const text = buildOrderMessage({ name: rows[0].name, price: rows[0].price, qty, link });
     res.set("Cache-Control", "no-store");
     res.set("X-Robots-Tag", "noindex, nofollow");
     res.redirect(302, waLink(rows[0].phone, text));
