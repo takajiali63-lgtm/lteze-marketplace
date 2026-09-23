@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
 
 // ============================================================ limits
 
@@ -68,7 +68,7 @@ export async function processImage(input: Buffer): Promise<ProcessedImage> {
   const sniffed = sniffImageType(input);
   if (!sniffed) throw new ImageRejected("نوع الملف غير مسموح. المسموح: JPG, PNG, WebP");
 
-  let meta: sharp.Metadata;
+  let meta: Metadata;
   try {
     meta = await sharp(input, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).metadata();
   } catch {
