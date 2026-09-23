@@ -6,9 +6,11 @@ import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client
  *  - "external": a URL we do not own (legacy image, Shopify CDN link...) — never deleted by us
  *  - "s3":       S3-compatible object storage (Cloudflare R2, AWS S3, Backblaze B2, DigitalOcean Spaces...)
  *  - "shopify":  reserved for Shopify Files (storage_key = Shopify file GID) — no schema change needed
- * Only the URL + key are stored in PostgreSQL, never image bytes.
+ *  - "db":       fallback persistent store (media_blobs table) used when no object storage is configured.
+ *                Survives redeploys; switch to "s3" by setting STORAGE_DRIVER=s3 + S3_* env vars.
+ * product_images only ever stores URL + provider + key.
  */
-export type StorageProvider = "external" | "s3" | "shopify";
+export type StorageProvider = "external" | "s3" | "shopify" | "db";
 
 export interface StoredObject {
   provider: StorageProvider;
@@ -58,23 +60,32 @@ class S3Driver implements StorageDriver {
 }
 
 let cached: StorageDriver | null | undefined;
+let dbFallback: StorageDriver | null = null;
 
-/** Returns the configured driver, or null if no storage is configured (uploads disabled, URL images still work). */
+/** Registers the database-backed fallback driver (see stores.ts). */
+export function setDbFallback(driver: StorageDriver): void {
+  dbFallback = driver;
+}
+
+/**
+ * Returns the active storage driver:
+ *  - S3-compatible object storage when STORAGE_DRIVER=s3 and all S3_* variables are set
+ *  - otherwise the persistent database fallback (if registered)
+ */
 export function getStorage(): StorageDriver | null {
-  if (cached !== undefined) return cached;
+  if (cached) return cached;
   const driver = (process.env.STORAGE_DRIVER ?? "none").toLowerCase();
-  if (driver !== "s3") {
-    cached = null;
-    return cached;
-  }
+  if (driver !== "s3") return dbFallback;
   const bucket = process.env.S3_BUCKET;
   const publicBase = process.env.S3_PUBLIC_BASE_URL?.replace(/\/+$/, "");
   const accessKeyId = process.env.S3_ACCESS_KEY_ID;
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
   if (!bucket || !publicBase || !accessKeyId || !secretAccessKey) {
-    console.error("[storage] STORAGE_DRIVER=s3 but S3_BUCKET / S3_PUBLIC_BASE_URL / S3 keys are missing. Uploads disabled.");
-    cached = null;
-    return cached;
+    if (cached === undefined) {
+      console.error("[storage] STORAGE_DRIVER=s3 but S3 settings are incomplete; using database storage instead.");
+      cached = null;
+    }
+    return dbFallback;
   }
   cached = new S3Driver(bucket, publicBase, {
     endpoint: process.env.S3_ENDPOINT || undefined,

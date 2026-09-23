@@ -42,14 +42,21 @@ export function createPool(): Pool {
 const MIGRATION_LOCK_ID = 774411; // arbitrary constant for pg_advisory_lock
 
 export async function runMigrations(pool: Pool): Promise<void> {
-  const schemaPath = path.resolve(__dirname, "..", "sql", "schema.sql");
-  const sql = fs.readFileSync(schemaPath, "utf8");
+  // schema.sql first, then numbered migrations (002_*.sql, 003_*.sql, ...) in order.
+  // Every file must be idempotent: the whole set runs on every startup.
+  const sqlDir = path.resolve(__dirname, "..", "sql");
+  const files = [
+    "schema.sql",
+    ...fs.readdirSync(sqlDir).filter((f) => /^\d{3}_[\w-]+\.sql$/.test(f)).sort(),
+  ];
   const client = await pool.connect();
   try {
     await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
     try {
       await client.query("BEGIN");
-      await client.query(sql);
+      for (const f of files) {
+        await client.query(fs.readFileSync(path.join(sqlDir, f), "utf8"));
+      }
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");

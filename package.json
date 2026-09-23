@@ -6,6 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "prebuild": "npm audit --omit=dev || true",
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "node dist/migrate.js",

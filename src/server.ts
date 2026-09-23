@@ -112,6 +112,7 @@ import {
 import "./auth";
 import "./products";
 import "./admin";
+import "./stores";
 
 // ------------------------------------------------------------- errors
 
