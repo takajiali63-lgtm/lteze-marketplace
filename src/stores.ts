@@ -255,3 +255,46 @@ admin.post(
     res.status(201).json({ ok: true, seller });
   }),
 );
+
+// ============================================================ admin: sync categories from Shopify collections
+// slug = Shopify collection handle (Arabic handles allowed), so a category maps 1:1 to a store section.
+
+const COLLECTION_HANDLE = /^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u;
+const categorySyncSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(100),
+        slug: z.string().trim().min(1).max(150).regex(COLLECTION_HANDLE),
+      }),
+    )
+    .min(1)
+    .max(250),
+});
+
+admin.post(
+  "/categories/sync",
+  h(async (req, res) => {
+    const d = parse(categorySyncSchema, req.body);
+    const aid = adminId(req);
+    let created = 0;
+    let updated = 0;
+    const failed: { slug: string; error: string }[] = [];
+    for (const [i, it] of d.items.entries()) {
+      try {
+        const r = await pool.query<{ inserted: boolean }>(
+          `INSERT INTO categories (name, slug, active, sort_order) VALUES ($1, $2, TRUE, $3)
+           ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, active = TRUE, sort_order = EXCLUDED.sort_order, updated_at = now()
+           RETURNING (xmax = 0) AS inserted`,
+          [it.name, it.slug, i],
+        );
+        if (r.rows[0]?.inserted) created++;
+        else updated++;
+      } catch (err) {
+        failed.push({ slug: it.slug, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    await audit(pool, { adminId: aid, action: "category_sync", metadata: { created, updated, failed: failed.length } });
+    res.json({ ok: true, created, updated, failed });
+  }),
+);
